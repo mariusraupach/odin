@@ -1,0 +1,16 @@
+{
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "bradlc.vscode-tailwindcss",
+        "eamodio.gitlens",
+        "esbenp.prettier-vscode",
+        "GitHub.copilot-chat"
+      ]
+    }
+  },
+  "dockerComposeFile": "compose.yml",
+  "name": "node",
+  "service": "node",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}"
+}
