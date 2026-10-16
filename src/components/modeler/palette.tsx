@@ -10,6 +10,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandShortcut,
 } from "@/components/ui/command";
 import {
   buildings,
@@ -78,10 +79,10 @@ export function Palette() {
               {...dragProps({ type: "residence", id: tier.id })}
             >
               <HouseIcon />
-              {tier.name}
-              <span className="text-muted-foreground ml-auto text-xs">
+              <span className="flex-1 truncate">{tier.name}</span>
+              <CommandShortcut className="tracking-normal tabular-nums">
                 {tier.residentsPerHouse}/house
-              </span>
+              </CommandShortcut>
             </CommandItem>
           ))}
         </CommandGroup>
@@ -100,10 +101,10 @@ export function Palette() {
                 {...dragProps({ type: "building", id: building.id })}
               >
                 <FactoryIcon />
-                <span className="truncate">{building.name}</span>
-                <span className="text-muted-foreground ml-auto truncate text-xs">
+                <span className="flex-1 truncate">{building.name}</span>
+                <CommandShortcut className="max-w-[45%] truncate text-right tracking-normal">
                   {outputNames(building)}
-                </span>
+                </CommandShortcut>
               </CommandItem>
             ))}
           </CommandGroup>

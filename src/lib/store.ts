@@ -30,7 +30,7 @@ export type Plan = {
   edges: PlanEdge[];
 };
 
-type NewNode =
+export type NewNode =
   | { type: "building"; data: BuildingNodeData }
   | { type: "residence"; data: ResidenceNodeData };
 
