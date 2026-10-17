@@ -9,6 +9,7 @@
       ]
     }
   },
+  "forwardPorts": [3000],
   "dockerComposeFile": "compose.yml",
   "name": "node",
   "service": "node",
