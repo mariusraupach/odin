@@ -86,7 +86,8 @@ export function Canvas() {
   };
 
   // Escape clears the selection, ⌘/Ctrl+A selects everything, ⌘/Ctrl+D
-  // duplicates the selection.
+  // duplicates the selection, ⌘/Ctrl+Z undoes and ⇧⌘Z or ⌘/Ctrl+Y redoes.
+  // Inside text fields the browser's own shortcuts win.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
@@ -104,6 +105,11 @@ export function Canvas() {
           .nodes.filter((n) => n.selected)
           .map((n) => n.id);
         if (ids.length > 0) duplicateNodes(ids);
+      } else if (key === "z" || key === "y") {
+        event.preventDefault();
+        const { undo, redo } = usePlanStore.temporal.getState();
+        if (key === "z" && !event.shiftKey) undo();
+        else redo();
       }
     };
     window.addEventListener("keydown", onKeyDown);

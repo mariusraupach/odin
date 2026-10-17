@@ -64,3 +64,19 @@ test("builds a chain from the palette and keeps it after a reload", async ({
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
   await expect(page.locator(".react-flow__edge")).toHaveCount(1);
 });
+
+test("undoes and redoes changes", async ({ page }) => {
+  await page
+    .locator("aside [cmdk-item]", { hasText: "Fishery" })
+    .first()
+    .click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+
+  await page.locator(".react-flow__pane").click();
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator(".react-flow__node")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Redo" }).click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Redo" })).toBeDisabled();
+});

@@ -5,12 +5,15 @@ import {
   FilePlusIcon,
   MenuIcon,
   MoonIcon,
+  Redo2Icon,
   SunIcon,
+  Undo2Icon,
   UploadIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRef } from "react";
 import { toast } from "sonner";
+import { useStore } from "zustand";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,6 +31,16 @@ export function Toolbar() {
   const clear = usePlanStore((s) => s.clear);
   const exportPlan = usePlanStore((s) => s.exportPlan);
   const importPlan = usePlanStore((s) => s.importPlan);
+  const { undo, redo } = usePlanStore.temporal.getState();
+  const canUndo = useStore(
+    usePlanStore.temporal,
+    (s) => s.pastStates.length > 0,
+  );
+  const canRedo = useStore(
+    usePlanStore.temporal,
+    (s) => s.futureStates.length > 0,
+  );
+  const mod = navigator.platform.toLowerCase().includes("mac") ? "⌘" : "Ctrl+";
 
   const download = () => {
     const blob = new Blob([JSON.stringify(exportPlan(), null, 2)], {
@@ -79,6 +92,28 @@ export function Toolbar() {
       </DropdownMenu>
       <h1 className="font-heading font-semibold">Anno 1800 Modeler</h1>
       <span className="text-muted-foreground text-xs">Old World</span>
+      <div className="ml-2 flex">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Undo"
+          title={`Undo (${mod}Z)`}
+          disabled={!canUndo}
+          onClick={() => undo()}
+        >
+          <Undo2Icon />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Redo"
+          title={`Redo (${mod === "⌘" ? "⇧⌘Z" : "Ctrl+Y"})`}
+          disabled={!canRedo}
+          onClick={() => redo()}
+        >
+          <Redo2Icon />
+        </Button>
+      </div>
       <NodeSearch />
       <Button
         variant="ghost"

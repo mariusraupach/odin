@@ -7,6 +7,7 @@ import {
   type NodeChange,
   type XYPosition,
 } from "@xyflow/react";
+import { temporal } from "zundo";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { buildingsById, producersOf } from "@/lib/anno";
@@ -157,264 +158,299 @@ export function isPlan(value: unknown): value is Plan {
   );
 }
 
+/** The part of the plan undo/redo restores. */
+type Snapshot = Pick<PlanState, "nodes" | "edges">;
+
+// Selection is not something to undo.
+const snapshot = ({ nodes, edges }: PlanState): Snapshot => ({
+  nodes: nodes.map(({ selected, dragging, ...n }) => n as PlanNode),
+  edges: edges.map(({ selected, ...e }) => e),
+});
+
+// React Flow re-measures nodes all the time; sizes alone are no change.
+const withoutSizes = ({ nodes, edges }: Snapshot) =>
+  JSON.stringify([nodes.map(({ measured, ...n }) => n), edges]);
+
 export const usePlanStore = create<PlanState>()(
-  persist(
-    (set, get) => ({
-      nodes: [],
-      edges: [],
-      onNodesChange: (changes) =>
-        set({ nodes: applyNodeChanges(changes, get().nodes) }),
-      onEdgesChange: (changes) =>
-        set({ edges: applyEdgeChanges(changes, get().edges) }),
-      onConnect: (connection) => {
-        if (!isValidConnection(connection, get().edges)) return;
-        set({ edges: addEdge({ ...connection, type: "flow" }, get().edges) });
-      },
-      addNode: (node, position) => {
-        const id = newId();
-        // Dropped onto an island: the node joins it.
-        set({
-          nodes: sortParentsFirst([
-            ...get().nodes,
-            { ...node, id, ...placeAt(position, get().nodes) } as PlanNode,
-          ]),
-        });
-        return id;
-      },
-      updateNodeData: (id, data) =>
-        set({
-          nodes: get().nodes.map((n) =>
-            n.id === id
-              ? ({ ...n, data: { ...n.data, ...data } } as PlanNode)
-              : n,
-          ),
-        }),
-      removeNodes: (ids) => {
-        // Deleting an island deletes what is on it.
-        const remove = new Set(ids);
-        for (const n of get().nodes) {
-          if (n.parentId && remove.has(n.parentId)) remove.add(n.id);
-        }
-        set({
-          nodes: get().nodes.filter((n) => !remove.has(n.id)),
-          edges: get().edges.filter(
-            (e) => !remove.has(e.source) && !remove.has(e.target),
-          ),
-        });
-      },
-      duplicateNodes: (ids) => {
-        const { nodes, edges } = get();
-        const originals = nodes.filter(
-          (n) => ids.includes(n.id) && !isIsland(n),
-        );
-        const copies = new Map(originals.map((n) => [n.id, newId()]));
-        set({
-          nodes: [
-            ...nodes.map((n) => ({ ...n, selected: false }) as PlanNode),
-            ...originals.map(
-              (n) =>
-                ({
-                  ...n,
-                  id: copies.get(n.id)!,
-                  position: { x: n.position.x + 40, y: n.position.y + 40 },
-                  selected: true,
-                }) as PlanNode,
+  temporal(
+    persist(
+      (set, get) => ({
+        nodes: [],
+        edges: [],
+        onNodesChange: (changes) =>
+          set({ nodes: applyNodeChanges(changes, get().nodes) }),
+        onEdgesChange: (changes) =>
+          set({ edges: applyEdgeChanges(changes, get().edges) }),
+        onConnect: (connection) => {
+          if (!isValidConnection(connection, get().edges)) return;
+          set({ edges: addEdge({ ...connection, type: "flow" }, get().edges) });
+        },
+        addNode: (node, position) => {
+          const id = newId();
+          // Dropped onto an island: the node joins it.
+          set({
+            nodes: sortParentsFirst([
+              ...get().nodes,
+              { ...node, id, ...placeAt(position, get().nodes) } as PlanNode,
+            ]),
+          });
+          return id;
+        },
+        updateNodeData: (id, data) =>
+          set({
+            nodes: get().nodes.map((n) =>
+              n.id === id
+                ? ({ ...n, data: { ...n.data, ...data } } as PlanNode)
+                : n,
             ),
-          ],
-          edges: [
-            ...edges,
-            ...edges
-              .filter((e) => copies.has(e.source) && copies.has(e.target))
-              .map((e) => ({
-                ...e,
-                id: `e-${newId()}`,
-                source: copies.get(e.source)!,
-                target: copies.get(e.target)!,
-                selected: false,
-              })),
-          ],
-        });
-      },
-      selectNodes: (ids) => {
-        const keep = new Set(ids);
-        set({
-          nodes: get().nodes.map(
-            (n) => ({ ...n, selected: keep.has(n.id) }) as PlanNode,
-          ),
-          edges: get().edges.map((e) => ({ ...e, selected: false })),
-        });
-      },
-      selectAll: () =>
-        set({
-          nodes: get().nodes.map((n) => ({ ...n, selected: true }) as PlanNode),
-        }),
-      addSuppliers: (id) => {
-        const { nodes, edges } = get();
-        const result: SupplierResult = {
-          connected: 0,
-          expanded: 0,
-          added: 0,
-          starved: 0,
-        };
-        const node = nodes.find((n) => n.id === id);
-        if (!node) return result;
-        // Plan against what producers would make if fully supplied: a
-        // producer starved of its own inputs needs suppliers itself, and
-        // growing it would not help.
-        const flow = computeFlow(nodes, edges, { assumeFullInputs: true });
-        const missing = (flow.nodes.get(id)?.inputs ?? []).filter(
-          (i) => i.nominal - i.actual > 1e-6,
-        );
-
-        const nextNodes = [...nodes];
-        const newEdges: PlanEdge[] = [];
-        const isLinked = (sourceId: string, good: string) =>
-          [...edges, ...newEdges].some(
-            (e) =>
-              e.source === sourceId &&
-              e.target === id &&
-              e.targetHandle === inHandle(good),
-          );
-        const connect = (sourceId: string, good: string) => {
-          if (isLinked(sourceId, good)) return;
-          newEdges.push({
-            id: `e-${newId()}`,
-            type: "flow",
-            source: sourceId,
-            sourceHandle: outHandle(good),
-            target: id,
-            targetHandle: inHandle(good),
-          });
-        };
-
-        missing.forEach((input, index) => {
-          let shortfall = input.nominal - input.actual;
-          const producers = nodes.filter(
-            (n): n is BuildingNode =>
-              n.type === "building" &&
-              n.id !== id &&
-              (buildingsById
-                .get(n.data.buildingId)
-                ?.outputs.some((o) => o.good === input.good) ??
-                false),
-          );
-
-          // 1. Tap spare output of producers already on the canvas.
-          const withSpare = producers
-            .map((producer) => ({
-              producer,
-              spare: spareOutput(flow, edges, producer.id, input.good),
-            }))
-            .filter(({ spare }) => spare > 1e-6)
-            .sort((a, b) => b.spare - a.spare);
-          for (const { producer, spare } of withSpare) {
-            if (shortfall <= 1e-6) break;
-            connect(producer.id, input.good);
-            shortfall -= spare;
-            result.connected++;
+          }),
+        removeNodes: (ids) => {
+          // Deleting an island deletes what is on it.
+          const remove = new Set(ids);
+          for (const n of get().nodes) {
+            if (n.parentId && remove.has(n.parentId)) remove.add(n.id);
           }
-          if (shortfall <= 1e-6) return;
-
-          // 2. Grow an existing producer, preferring one already wired here.
-          const grow =
-            producers.find((p) => isLinked(p.id, input.good)) ?? producers[0];
-          if (grow) {
-            nextNodes[nextNodes.findIndex((n) => n.id === grow.id)] = {
-              ...grow,
-              data: {
-                ...grow.data,
-                count:
-                  grow.data.count +
-                  buildingsFor(
-                    shortfall,
-                    grow.data.buildingId,
-                    grow.data.productivity,
-                  ),
-              },
-            };
-            connect(grow.id, input.good);
-            result.expanded++;
-            return;
-          }
-
-          // 3. Nothing on the canvas makes it yet: add a new producer.
-          const producer = producersOf(input.good)[0];
-          if (!producer) return;
-          const supplierId = newId();
-          nextNodes.push({
-            id: supplierId,
-            type: "building",
-            // Same island as the node it supplies.
-            parentId: node.parentId,
-            position: {
-              x: node.position.x - 340,
-              y: node.position.y + (index - (missing.length - 1) / 2) * 220,
-            },
-            data: {
-              buildingId: producer.id,
-              count: buildingsFor(shortfall, producer.id),
-              productivity: 100,
-            },
+          set({
+            nodes: get().nodes.filter((n) => !remove.has(n.id)),
+            edges: get().edges.filter(
+              (e) => !remove.has(e.source) && !remove.has(e.target),
+            ),
           });
-          connect(supplierId, input.good);
-          result.added++;
-        });
-        const allEdges = [...edges, ...newEdges];
-        // Report suppliers of this node that are short on their own inputs.
-        const real = computeFlow(nextNodes, allEdges);
-        result.starved = new Set(
-          allEdges
-            .filter(
+        },
+        duplicateNodes: (ids) => {
+          const { nodes, edges } = get();
+          const originals = nodes.filter(
+            (n) => ids.includes(n.id) && !isIsland(n),
+          );
+          const copies = new Map(originals.map((n) => [n.id, newId()]));
+          set({
+            nodes: [
+              ...nodes.map((n) => ({ ...n, selected: false }) as PlanNode),
+              ...originals.map(
+                (n) =>
+                  ({
+                    ...n,
+                    id: copies.get(n.id)!,
+                    position: { x: n.position.x + 40, y: n.position.y + 40 },
+                    selected: true,
+                  }) as PlanNode,
+              ),
+            ],
+            edges: [
+              ...edges,
+              ...edges
+                .filter((e) => copies.has(e.source) && copies.has(e.target))
+                .map((e) => ({
+                  ...e,
+                  id: `e-${newId()}`,
+                  source: copies.get(e.source)!,
+                  target: copies.get(e.target)!,
+                  selected: false,
+                })),
+            ],
+          });
+        },
+        selectNodes: (ids) => {
+          const keep = new Set(ids);
+          set({
+            nodes: get().nodes.map(
+              (n) => ({ ...n, selected: keep.has(n.id) }) as PlanNode,
+            ),
+            edges: get().edges.map((e) => ({ ...e, selected: false })),
+          });
+        },
+        selectAll: () =>
+          set({
+            nodes: get().nodes.map(
+              (n) => ({ ...n, selected: true }) as PlanNode,
+            ),
+          }),
+        addSuppliers: (id) => {
+          const { nodes, edges } = get();
+          const result: SupplierResult = {
+            connected: 0,
+            expanded: 0,
+            added: 0,
+            starved: 0,
+          };
+          const node = nodes.find((n) => n.id === id);
+          if (!node) return result;
+          // Plan against what producers would make if fully supplied: a
+          // producer starved of its own inputs needs suppliers itself, and
+          // growing it would not help.
+          const flow = computeFlow(nodes, edges, { assumeFullInputs: true });
+          const missing = (flow.nodes.get(id)?.inputs ?? []).filter(
+            (i) => i.nominal - i.actual > 1e-6,
+          );
+
+          const nextNodes = [...nodes];
+          const newEdges: PlanEdge[] = [];
+          const isLinked = (sourceId: string, good: string) =>
+            [...edges, ...newEdges].some(
               (e) =>
+                e.source === sourceId &&
                 e.target === id &&
-                (real.nodes.get(e.source)?.efficiency ?? 1) < 0.999,
-            )
-            .map((e) => e.source),
-        ).size;
-        set({ nodes: nextNodes, edges: allEdges });
-        return result;
-      },
-      autoArrange: false,
-      showRates: false,
-      setShowRates: (showRates) => set({ showRates }),
-      paletteGrouping: "tier",
-      setPaletteGrouping: (paletteGrouping) => set({ paletteGrouping }),
-      setAutoArrange: (autoArrange) => set({ autoArrange }),
-      arrange: () => set({ nodes: arrangeNodes(get().nodes, get().edges) }),
-      addIsland: (position) => {
-        const id = newId();
-        set({
-          nodes: sortParentsFirst([
-            ...get().nodes,
-            newIsland(get().nodes, id, position),
-          ]),
-        });
-        return id;
-      },
-      groupIntoIsland: (ids) =>
-        set({ nodes: groupIntoIsland(get().nodes, ids, newId()) }),
-      ungroupIsland: (id) => set({ nodes: ungroupIsland(get().nodes, id) }),
-      reparentNodes: (ids) => set({ nodes: reparent(get().nodes, ids) }),
-      removeFromIsland: (ids) => set({ nodes: detach(get().nodes, ids) }),
-      importPlan: (plan) =>
-        set({ nodes: sortParentsFirst(plan.nodes), edges: plan.edges }),
-      exportPlan: () => ({
+                e.targetHandle === inHandle(good),
+            );
+          const connect = (sourceId: string, good: string) => {
+            if (isLinked(sourceId, good)) return;
+            newEdges.push({
+              id: `e-${newId()}`,
+              type: "flow",
+              source: sourceId,
+              sourceHandle: outHandle(good),
+              target: id,
+              targetHandle: inHandle(good),
+            });
+          };
+
+          missing.forEach((input, index) => {
+            let shortfall = input.nominal - input.actual;
+            const producers = nodes.filter(
+              (n): n is BuildingNode =>
+                n.type === "building" &&
+                n.id !== id &&
+                (buildingsById
+                  .get(n.data.buildingId)
+                  ?.outputs.some((o) => o.good === input.good) ??
+                  false),
+            );
+
+            // 1. Tap spare output of producers already on the canvas.
+            const withSpare = producers
+              .map((producer) => ({
+                producer,
+                spare: spareOutput(flow, edges, producer.id, input.good),
+              }))
+              .filter(({ spare }) => spare > 1e-6)
+              .sort((a, b) => b.spare - a.spare);
+            for (const { producer, spare } of withSpare) {
+              if (shortfall <= 1e-6) break;
+              connect(producer.id, input.good);
+              shortfall -= spare;
+              result.connected++;
+            }
+            if (shortfall <= 1e-6) return;
+
+            // 2. Grow an existing producer, preferring one already wired here.
+            const grow =
+              producers.find((p) => isLinked(p.id, input.good)) ?? producers[0];
+            if (grow) {
+              nextNodes[nextNodes.findIndex((n) => n.id === grow.id)] = {
+                ...grow,
+                data: {
+                  ...grow.data,
+                  count:
+                    grow.data.count +
+                    buildingsFor(
+                      shortfall,
+                      grow.data.buildingId,
+                      grow.data.productivity,
+                    ),
+                },
+              };
+              connect(grow.id, input.good);
+              result.expanded++;
+              return;
+            }
+
+            // 3. Nothing on the canvas makes it yet: add a new producer.
+            const producer = producersOf(input.good)[0];
+            if (!producer) return;
+            const supplierId = newId();
+            nextNodes.push({
+              id: supplierId,
+              type: "building",
+              // Same island as the node it supplies.
+              parentId: node.parentId,
+              position: {
+                x: node.position.x - 340,
+                y: node.position.y + (index - (missing.length - 1) / 2) * 220,
+              },
+              data: {
+                buildingId: producer.id,
+                count: buildingsFor(shortfall, producer.id),
+                productivity: 100,
+              },
+            });
+            connect(supplierId, input.good);
+            result.added++;
+          });
+          const allEdges = [...edges, ...newEdges];
+          // Report suppliers of this node that are short on their own inputs.
+          const real = computeFlow(nextNodes, allEdges);
+          result.starved = new Set(
+            allEdges
+              .filter(
+                (e) =>
+                  e.target === id &&
+                  (real.nodes.get(e.source)?.efficiency ?? 1) < 0.999,
+              )
+              .map((e) => e.source),
+          ).size;
+          set({ nodes: nextNodes, edges: allEdges });
+          return result;
+        },
+        autoArrange: false,
+        showRates: false,
+        setShowRates: (showRates) => set({ showRates }),
+        paletteGrouping: "tier",
+        setPaletteGrouping: (paletteGrouping) => set({ paletteGrouping }),
+        setAutoArrange: (autoArrange) => set({ autoArrange }),
+        arrange: () => set({ nodes: arrangeNodes(get().nodes, get().edges) }),
+        addIsland: (position) => {
+          const id = newId();
+          set({
+            nodes: sortParentsFirst([
+              ...get().nodes,
+              newIsland(get().nodes, id, position),
+            ]),
+          });
+          return id;
+        },
+        groupIntoIsland: (ids) =>
+          set({ nodes: groupIntoIsland(get().nodes, ids, newId()) }),
+        ungroupIsland: (id) => set({ nodes: ungroupIsland(get().nodes, id) }),
+        reparentNodes: (ids) => set({ nodes: reparent(get().nodes, ids) }),
+        removeFromIsland: (ids) => set({ nodes: detach(get().nodes, ids) }),
+        importPlan: (plan) =>
+          set({ nodes: sortParentsFirst(plan.nodes), edges: plan.edges }),
+        exportPlan: () => ({
+          version: PLAN_VERSION,
+          nodes: get().nodes,
+          edges: get().edges,
+        }),
+        clear: () => set({ nodes: [], edges: [] }),
+      }),
+      {
+        name: "anno-modeler:v1",
         version: PLAN_VERSION,
-        nodes: get().nodes,
-        edges: get().edges,
-      }),
-      clear: () => set({ nodes: [], edges: [] }),
-    }),
+        partialize: (state) => ({
+          nodes: state.nodes,
+          edges: state.edges,
+          autoArrange: state.autoArrange,
+          showRates: state.showRates,
+          paletteGrouping: state.paletteGrouping,
+        }),
+      },
+    ),
     {
-      name: "anno-modeler:v1",
-      version: PLAN_VERSION,
-      partialize: (state) => ({
-        nodes: state.nodes,
-        edges: state.edges,
-        autoArrange: state.autoArrange,
-        showRates: state.showRates,
-        paletteGrouping: state.paletteGrouping,
-      }),
+      partialize: snapshot,
+      equality: (past, current) => withoutSizes(past) === withoutSizes(current),
+      limit: 100,
+      // Changes in quick succession (a drag, typing a count) are one step:
+      // only the state before the first change of a burst is kept.
+      handleSet: (handleSet) => {
+        let burst: ReturnType<typeof setTimeout> | undefined;
+        return (pastState, replace) => {
+          if (!burst) handleSet(pastState, replace);
+          clearTimeout(burst);
+          burst = setTimeout(() => (burst = undefined), 400);
+        };
+      },
     },
   ),
 );
+
+// Loading the saved plan is not an undoable change.
+usePlanStore.temporal.getState().clear();
