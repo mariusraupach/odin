@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { isPlan, usePlanStore } from "@/lib/store";
+import { NodeSearch } from "./node-search";
 
 export function Toolbar() {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -78,10 +79,10 @@ export function Toolbar() {
       </DropdownMenu>
       <h1 className="font-heading font-semibold">Anno 1800 Modeler</h1>
       <span className="text-muted-foreground text-xs">Old World</span>
+      <NodeSearch />
       <Button
         variant="ghost"
         size="icon"
-        className="ml-auto"
         aria-label="Toggle theme"
         onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
       >
