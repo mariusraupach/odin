@@ -25,6 +25,7 @@ export function Inspector() {
   const removeNodes = usePlanStore((s) => s.removeNodes);
   const addSuppliers = usePlanStore((s) => s.addSuppliers);
   const node = selectedCount === 1 ? firstSelected : undefined;
+  const hasIslands = flow.workforce.some((area) => area.island);
 
   // Group by the game's goods categories; biggest deficits first in each.
   const goods = [...flow.goods].sort(
@@ -74,7 +75,8 @@ export function Inspector() {
       <section className="flex flex-col gap-1">
         <h2 className="font-medium">Goods balance</h2>
         <p className="text-muted-foreground text-xs">
-          Whole plan, t/min, regardless of connections.
+          Whole plan, t/min, regardless of connections
+          {hasIslands && ": goods can be shipped between islands"}.
         </p>
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
           {(
@@ -141,22 +143,50 @@ export function Inspector() {
 
       <section className="flex flex-col gap-1">
         <h2 className="font-medium">Workforce</h2>
+        {hasIslands && (
+          <p className="text-muted-foreground text-xs">
+            Per island: workers don’t commute to other islands.
+          </p>
+        )}
         <table className="w-full text-xs tabular-nums">
-          <tbody>
-            {flow.workforce.map((w) => (
-              <tr key={w.workforce} className="border-b last:border-0">
-                <td className="py-1">{workforceById.get(w.workforce)?.name}</td>
-                <td
-                  className={cn(
-                    "py-1 text-right",
-                    statusText[rateStatus(w.provided, w.required)],
-                  )}
-                >
-                  {w.provided.toLocaleString()} / {w.required.toLocaleString()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
+          {flow.workforce.map(({ island, balance }) => (
+            <tbody key={island?.id ?? "none"}>
+              {hasIslands && (
+                <tr>
+                  <th
+                    colSpan={2}
+                    className="text-muted-foreground pt-3 pb-1 text-left text-[11px] font-medium"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="size-2 rounded-full bg-current"
+                        style={
+                          island ? { color: island.data.color } : undefined
+                        }
+                      />
+                      {island ? island.data.name : "Not on an island"}
+                    </span>
+                  </th>
+                </tr>
+              )}
+              {balance.map((w) => (
+                <tr key={w.workforce} className="border-b last:border-0">
+                  <td className="py-1">
+                    {workforceById.get(w.workforce)?.name}
+                  </td>
+                  <td
+                    className={cn(
+                      "py-1 text-right",
+                      statusText[rateStatus(w.provided, w.required)],
+                    )}
+                  >
+                    {w.provided.toLocaleString()} /{" "}
+                    {w.required.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          ))}
         </table>
       </section>
     </div>

@@ -71,6 +71,15 @@ export type WorkforceBalance = {
   provided: number;
 };
 
+/**
+ * Workers only work where they live, so workforce balances per island; nodes
+ * on no island share one balance (`island: null`).
+ */
+export type WorkforceArea = {
+  island: IslandNode | null;
+  balance: WorkforceBalance[];
+};
+
 export type GoodRate = { good: string; rate: number };
 
 export type IslandStats = {
@@ -96,7 +105,7 @@ export type FlowResult = {
   nodes: Map<string, NodeFlow>;
   edges: Map<string, EdgeFlow>;
   goods: GoodBalance[];
-  workforce: WorkforceBalance[];
+  workforce: WorkforceArea[];
   islands: Map<string, IslandStats>;
   routes: TradeRoute[];
   routeOfEdge: Map<string, TradeRoute>;
@@ -364,8 +373,9 @@ export function computeFlow(
   }
 
   // Workforce and trade are per island: workers do not commute by ship.
+  const islandNodes = nodes.filter((n): n is IslandNode => n.type === "island");
   const islands = new Map<string, IslandStats>();
-  for (const island of nodes.filter((n) => n.type === "island")) {
+  for (const island of islandNodes) {
     const members = nodes.filter((n) => n.parentId === island.id);
     islands.set(island.id, {
       workforce: workforceBalance(members),
@@ -408,7 +418,16 @@ export function computeFlow(
     nodes: nodeFlows,
     edges: edgeFlows,
     goods: [...goods.values()],
-    workforce: workforceBalance(nodes),
+    workforce: [
+      ...islandNodes.map((island) => ({
+        island,
+        balance: islands.get(island.id)!.workforce,
+      })),
+      {
+        island: null,
+        balance: workforceBalance(nodes.filter((n) => !n.parentId)),
+      },
+    ].filter((area) => area.balance.length > 0),
     islands,
     routes: [...routes.values()],
     routeOfEdge,
