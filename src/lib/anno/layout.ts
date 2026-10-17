@@ -36,19 +36,24 @@ function layered(
  * fit; then islands and loose nodes are arranged so supplying islands sit
  * left of the islands they ship to.
  */
-export function arrangeNodes(nodes: PlanNode[], edges: PlanEdge[]): PlanNode[] {
+export function arrangeNodes(
+  nodes: PlanNode[],
+  edges: PlanEdge[],
+  // Nodes not rendered yet have no measured size; callers can estimate one.
+  sizeOf: (node: PlanNode) => { width: number; height: number } = nodeSize,
+): PlanNode[] {
   const islandSize = new Map<string, { width: number; height: number }>();
   const placed = new Map<string, { x: number; y: number }>();
 
   for (const island of nodes.filter(isIsland)) {
     const members = nodes.filter((n) => n.parentId === island.id);
     if (members.length === 0) {
-      islandSize.set(island.id, nodeSize(island));
+      islandSize.set(island.id, sizeOf(island));
       continue;
     }
     const ids = new Set(members.map((n) => n.id));
     const inner = layered(
-      members.map((n) => ({ id: n.id, ...nodeSize(n) })),
+      members.map((n) => ({ id: n.id, ...sizeOf(n) })),
       edges
         .filter((e) => ids.has(e.source) && ids.has(e.target))
         .map((e) => [e.source, e.target]),
@@ -65,7 +70,7 @@ export function arrangeNodes(nodes: PlanNode[], edges: PlanEdge[]): PlanNode[] {
         y: p.y - top + ISLAND_HEADER,
       };
       placed.set(n.id, position);
-      const size = nodeSize(n);
+      const size = sizeOf(n);
       right = Math.max(right, position.x + size.width);
       bottom = Math.max(bottom, position.y + size.height);
     }
@@ -80,7 +85,7 @@ export function arrangeNodes(nodes: PlanNode[], edges: PlanEdge[]): PlanNode[] {
   const outer = layered(
     topLevel.map((n) => ({
       id: n.id,
-      ...(islandSize.get(n.id) ?? nodeSize(n)),
+      ...(islandSize.get(n.id) ?? sizeOf(n)),
     })),
     edges.map((e) => [topOf(e.source), topOf(e.target)]),
     // Wide gaps between islands leave room for the trade routes.

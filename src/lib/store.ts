@@ -36,6 +36,7 @@ import {
   ungroupIsland,
 } from "@/lib/anno/islands";
 import { arrangeNodes } from "@/lib/anno/layout";
+import { chainToPlan, planChain, type Goal } from "@/lib/anno/planner";
 
 export const PLAN_VERSION = 1;
 
@@ -102,6 +103,11 @@ type PlanState = {
   /** Selects exactly these nodes, and no edges. */
   selectNodes: (ids: string[]) => void;
   addSuppliers: (id: string) => SupplierResult;
+  /**
+   * Adds the sized production chain for a goal beside the plan and selects
+   * it. Returns the ids of the new nodes.
+   */
+  planGoal: (goal: Goal, options: { ownIsland: boolean }) => string[];
   /** Creates an empty island with its top-left corner at the point. */
   addIsland: (position: XYPosition) => string;
   groupIntoIsland: (ids: string[]) => void;
@@ -390,6 +396,24 @@ export const usePlanStore = create<PlanState>()(
           ).size;
           set({ nodes: nextNodes, edges: allEdges });
           return result;
+        },
+        planGoal: (goal, { ownIsland }) => {
+          const added = chainToPlan(goal, planChain(goal), get().nodes, {
+            ownIsland,
+            newId,
+          });
+          set({
+            nodes: sortParentsFirst([
+              ...get().nodes.map(
+                (n) => ({ ...n, selected: false }) as PlanNode,
+              ),
+              ...added.nodes.map(
+                (n) => ({ ...n, selected: !isIsland(n) }) as PlanNode,
+              ),
+            ]),
+            edges: [...get().edges, ...added.edges],
+          });
+          return added.nodes.map((n) => n.id);
         },
         autoArrange: false,
         showRates: false,

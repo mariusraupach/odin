@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { isPlan, usePlanStore } from "@/lib/store";
 import { NodeSearch } from "./node-search";
+import { PlanDialog } from "./plan-dialog";
 
 export function Toolbar() {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -115,6 +116,7 @@ export function Toolbar() {
         </Button>
       </div>
       <NodeSearch />
+      <PlanDialog />
       <Button
         variant="ghost"
         size="icon"
