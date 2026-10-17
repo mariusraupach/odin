@@ -1,8 +1,18 @@
 export type Region = "old-world" | "new-world";
 
+export type GoodCategoryId =
+  "raw" | "agricultural" | "intermediate" | "construction" | "consumer";
+
+/** The game's own goods categories, as in its warehouse and statistics. */
+export type GoodCategory = {
+  id: GoodCategoryId;
+  name: string;
+};
+
 export type Good = {
   id: string;
   name: string;
+  category: GoodCategoryId;
 };
 
 export type Workforce = {

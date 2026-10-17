@@ -1,8 +1,15 @@
-import { buildings, goods, populationTiers, workforce } from "./data";
+import {
+  buildings,
+  goodCategories,
+  goods,
+  populationTiers,
+  workforce,
+} from "./data";
 import type { Building, Good, PopulationTier, Workforce } from "./types";
 
 export * from "./types";
-export { buildings, goods, populationTiers, workforce };
+export { unlockTier } from "./unlocks";
+export { buildings, goodCategories, goods, populationTiers, workforce };
 
 const byId = <T extends { id: string }>(items: T[]) =>
   new Map(items.map((item) => [item.id, item]));
