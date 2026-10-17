@@ -4,9 +4,14 @@ import { PlugZapIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { buildingsById, goodName, tiersById, workforceById } from "@/lib/anno";
-import { formatRate, rateStatus } from "@/lib/anno/calc";
-import { usePlanStore } from "@/lib/store";
+import { goodCategories, goodName, goodsById, workforceById } from "@/lib/anno";
+import {
+  balanceStatus,
+  formatRate,
+  nodeTitle,
+  rateStatus,
+} from "@/lib/anno/calc";
+import { describeSuppliers, usePlanStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { statusText, useFlow } from "./flow-context";
 
@@ -21,17 +26,22 @@ export function Inspector() {
 
   const node = selectedCount === 1 ? firstSelected : undefined;
   const nodeFlow = node ? flow.nodes.get(node.id) : undefined;
-  const title = !node
-    ? null
-    : node.type === "building"
-      ? buildingsById.get(node.data.buildingId)?.name
-      : `${tiersById.get(node.data.tierId)?.name} (${node.data.houses} houses)`;
+  const title = node ? nodeTitle(node) : null;
   const unmet =
     nodeFlow?.inputs.some((i) => i.nominal - i.actual > 1e-6) ?? false;
 
+  // Group by the game's goods categories; biggest deficits first in each.
   const goods = [...flow.goods].sort(
     (a, b) => a.produced - a.consumed - (b.produced - b.consumed),
   );
+  const goodGroups = goodCategories
+    .map((category) => ({
+      category,
+      goods: goods.filter(
+        (g) => goodsById.get(g.good)?.category === category.id,
+      ),
+    }))
+    .filter((group) => group.goods.length > 0);
 
   return (
     <div className="flex flex-col gap-4 p-4 text-sm">
@@ -44,10 +54,7 @@ export function Inspector() {
               variant="outline"
               disabled={!unmet}
               onClick={() => {
-                const added = addSuppliers(node.id);
-                toast.success(
-                  `Added ${added} supplier${added === 1 ? "" : "s"}`,
-                );
+                toast.success(describeSuppliers(addSuppliers(node.id)));
               }}
             >
               <PlugZapIcon /> Add suppliers
@@ -73,35 +80,64 @@ export function Inspector() {
         <p className="text-muted-foreground text-xs">
           Whole plan, t/min, regardless of connections.
         </p>
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+          {(
+            [
+              ["none", "Missing"],
+              ["low", "Short"],
+              ["ok", "Balanced"],
+              ["surplus", "Surplus"],
+            ] as const
+          ).map(([status, label]) => (
+            <span
+              key={status}
+              className={cn("flex items-center gap-1", statusText[status])}
+            >
+              <span className="size-1.5 rounded-full bg-current" />
+              {label}
+            </span>
+          ))}
+        </div>
         {goods.length === 0 && (
           <p className="text-muted-foreground">
             Add buildings or residences to get started.
           </p>
         )}
         <table className="w-full text-xs tabular-nums">
-          <tbody>
-            {goods.map((g) => {
-              const net = g.produced - g.consumed;
-              const status = rateStatus(g.produced, g.consumed);
-              return (
-                <tr key={g.good} className="border-b last:border-0">
-                  <td className="py-1">{goodName(g.good)}</td>
-                  <td className="text-muted-foreground py-1 text-right">
-                    {formatRate(g.produced)} / {formatRate(g.consumed)}
-                  </td>
-                  <td
-                    className={cn(
-                      "py-1 pl-2 text-right font-medium",
-                      statusText[status],
-                    )}
-                  >
-                    {net >= 0 ? "+" : ""}
-                    {formatRate(net)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
+          {goodGroups.map(({ category, goods }) => (
+            <tbody key={category.id}>
+              <tr>
+                <th
+                  colSpan={3}
+                  className="text-muted-foreground pt-3 pb-1 text-left text-[11px] font-medium tracking-wide uppercase"
+                >
+                  {category.name}
+                </th>
+              </tr>
+              {goods.map((g) => {
+                const net = g.produced - g.consumed;
+                const status = balanceStatus(g.produced, g.consumed);
+                return (
+                  <tr key={g.good} className="border-b last:border-0">
+                    <td className="py-1">{goodName(g.good)}</td>
+                    <td className="text-muted-foreground py-1 text-right">
+                      {formatRate(g.produced)} / {formatRate(g.consumed)}
+                    </td>
+                    <td
+                      className={cn(
+                        "py-1 pl-2 text-right font-medium",
+                        statusText[status],
+                      )}
+                    >
+                      {status === "ok"
+                        ? "±0.00"
+                        : `${net > 0 ? "+" : ""}${formatRate(net)}`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          ))}
         </table>
       </section>
 

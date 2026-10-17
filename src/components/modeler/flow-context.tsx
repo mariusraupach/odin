@@ -15,6 +15,7 @@ export const statusText = {
   ok: "text-emerald-600 dark:text-emerald-400",
   low: "text-amber-600 dark:text-amber-400",
   none: "text-destructive",
+  surplus: "text-sky-600 dark:text-sky-400",
 } as const;
 
 export const statusStroke = {

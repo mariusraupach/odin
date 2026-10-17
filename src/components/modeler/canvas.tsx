@@ -4,7 +4,9 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   ReactFlow,
+  SelectionMode,
   useReactFlow,
   type Connection,
   type Edge,
@@ -12,19 +14,33 @@ import {
   type NodeTypes,
   type OnConnectEnd,
 } from "@xyflow/react";
+import { NetworkIcon, WandSparklesIcon } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
+import { Button } from "@/components/ui/button";
+import { Toggle } from "@/components/ui/toggle";
 import { handleGood } from "@/lib/anno/calc";
 import { isValidConnection, usePlanStore } from "@/lib/store";
+import { CanvasContextMenu, type MenuTarget } from "./canvas-menu";
 import { ConnectMenu, type ConnectMenuState } from "./connect-menu";
 import { FlowEdge } from "./flow-edge";
 import { BuildingNode } from "./nodes/building-node";
+import { IslandNode } from "./nodes/island-node";
 import { ResidenceNode } from "./nodes/residence-node";
-import { DRAG_TYPE, paletteNode, type PaletteItem } from "./palette";
+import { DRAG_TYPE, Palette, paletteNode, type PaletteItem } from "./palette";
+
+type AddMenuState = {
+  screen: { x: number; y: number };
+  flow: { x: number; y: number };
+};
+
+const ADD_MENU_WIDTH = 300;
+const ADD_MENU_HEIGHT = 360;
 
 const nodeTypes: NodeTypes = {
   building: BuildingNode,
   residence: ResidenceNode,
+  island: IslandNode,
 };
 const edgeTypes: EdgeTypes = { flow: FlowEdge };
 
@@ -35,10 +51,86 @@ export function Canvas() {
   const onEdgesChange = usePlanStore((s) => s.onEdgesChange);
   const onConnect = usePlanStore((s) => s.onConnect);
   const addNode = usePlanStore((s) => s.addNode);
-  const { screenToFlowPosition } = useReactFlow();
+  const arrange = usePlanStore((s) => s.arrange);
+  const autoArrange = usePlanStore((s) => s.autoArrange);
+  const setAutoArrange = usePlanStore((s) => s.setAutoArrange);
+  const { screenToFlowPosition, fitView } = useReactFlow();
   const { resolvedTheme } = useTheme();
   const container = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<ConnectMenuState | null>(null);
+  const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
+  const [addMenu, setAddMenu] = useState<AddMenuState | null>(null);
+  const duplicateNodes = usePlanStore((s) => s.duplicateNodes);
+  const selectAll = usePlanStore((s) => s.selectAll);
+  const addIsland = usePlanStore((s) => s.addIsland);
+  const reparentNodes = usePlanStore((s) => s.reparentNodes);
+
+  const closeMenus = () => {
+    setMenu(null);
+    setAddMenu(null);
+  };
+
+  // ⌘/Ctrl+A selects everything, ⌘/Ctrl+D duplicates the selection.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const el = event.target as HTMLElement;
+      if (el.closest("input, textarea, [contenteditable]")) return;
+      const key = event.key.toLowerCase();
+      if (key === "a") {
+        event.preventDefault();
+        selectAll();
+      } else if (key === "d") {
+        event.preventDefault();
+        const ids = usePlanStore
+          .getState()
+          .nodes.filter((n) => n.selected)
+          .map((n) => n.id);
+        if (ids.length > 0) duplicateNodes(ids);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectAll, duplicateNodes]);
+
+  const onPaneContextMenu = (event: { clientX: number; clientY: number }) => {
+    const rect = container.current?.getBoundingClientRect();
+    if (!rect) return;
+    const { clientX, clientY } = event;
+    const flow = screenToFlowPosition({ x: clientX, y: clientY });
+    const screen = {
+      x: Math.max(
+        8,
+        Math.min(clientX - rect.left, rect.width - ADD_MENU_WIDTH - 8),
+      ),
+      y: Math.max(
+        8,
+        Math.min(clientY - rect.top, rect.height - ADD_MENU_HEIGHT - 8),
+      ),
+    };
+    closeMenus();
+    setMenuTarget({
+      kind: "pane",
+      open: () => setAddMenu({ screen, flow }),
+      newIsland: () => addIsland(flow),
+    });
+  };
+
+  const arrangeAndFit = () => {
+    arrange();
+    // Wait a frame so React Flow has the new positions before fitting.
+    requestAnimationFrame(() => fitView({ duration: 300, maxZoom: 1 }));
+  };
+
+  // In auto mode, re-sort whenever nodes or edges are added or removed, once
+  // React Flow has measured every node so sizes are known.
+  const structure = `${nodes.map((n) => n.id).join()}|${edges.map((e) => e.id).join()}`;
+  const allMeasured = nodes.length > 0 && nodes.every((n) => n.measured?.width);
+  useEffect(() => {
+    if (!autoArrange || !allMeasured) return;
+    arrange();
+    requestAnimationFrame(() => fitView({ duration: 300, maxZoom: 1 }));
+  }, [autoArrange, allMeasured, structure, arrange, fitView]);
 
   // Releasing a connection on empty canvas offers buildings to attach there.
   const onConnectEnd: OnConnectEnd = (event, state) => {
@@ -76,35 +168,137 @@ export function Canvas() {
 
   return (
     <div ref={container} className="absolute inset-0">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        defaultEdgeOptions={{ type: "flow" }}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onConnectStart={() => setMenu(null)}
-        onConnectEnd={onConnectEnd}
-        onPaneClick={() => setMenu(null)}
-        onMoveStart={() => setMenu(null)}
-        isValidConnection={(connection: Connection | Edge) =>
-          isValidConnection(connection, edges)
-        }
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-        colorMode={resolvedTheme === "dark" ? "dark" : "light"}
-        snapToGrid
-        snapGrid={[20, 20]}
-        deleteKeyCode={["Backspace", "Delete"]}
-        fitView
-        fitViewOptions={{ maxZoom: 1 }}
-      >
-        <Background gap={20} />
-        <Controls />
-        <MiniMap pannable zoomable />
-      </ReactFlow>
+      <CanvasContextMenu target={menuTarget}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          defaultEdgeOptions={{ type: "flow" }}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onConnectStart={closeMenus}
+          onConnectEnd={onConnectEnd}
+          onPaneClick={closeMenus}
+          onMoveStart={closeMenus}
+          onPaneContextMenu={onPaneContextMenu}
+          onNodeContextMenu={(_, node) => {
+            closeMenus();
+            const selected = nodes.filter((n) => n.selected).map((n) => n.id);
+            if (node.selected && selected.length > 1) {
+              setMenuTarget({ kind: "selection", ids: selected });
+            } else if (node.type === "island") {
+              setMenuTarget({ kind: "island", id: node.id });
+            } else {
+              // Right-clicking an unselected node selects just that node.
+              onNodesChange(
+                nodes.map((n) => ({
+                  type: "select",
+                  id: n.id,
+                  selected: n.id === node.id,
+                })),
+              );
+              setMenuTarget({ kind: "node", id: node.id });
+            }
+          }}
+          onNodeDragStop={(_, __, dragged) =>
+            reparentNodes(dragged.map((n) => n.id))
+          }
+          onSelectionContextMenu={(_, selected) => {
+            closeMenus();
+            setMenuTarget({
+              kind: "selection",
+              ids: selected.map((n) => n.id),
+            });
+          }}
+          onEdgeContextMenu={(_, edge) => {
+            closeMenus();
+            setMenuTarget({ kind: "edge", id: edge.id });
+          }}
+          selectionOnDrag
+          selectionMode={SelectionMode.Partial}
+          panOnDrag={[1]}
+          panActivationKeyCode="Space"
+          isValidConnection={(connection: Connection | Edge) =>
+            isValidConnection(connection, edges)
+          }
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          colorMode={resolvedTheme === "dark" ? "dark" : "light"}
+          snapToGrid
+          snapGrid={[20, 20]}
+          deleteKeyCode={["Backspace", "Delete"]}
+          fitView
+          fitViewOptions={{ maxZoom: 1 }}
+          // Default is 0.5, too close to fit a large plan on screen.
+          minZoom={0.1}
+        >
+          <Background gap={20} />
+          <Controls />
+          <MiniMap
+            pannable
+            zoomable
+            nodeColor={(n) =>
+              n.type === "island"
+                ? `color-mix(in oklch, ${(n.data as { color: string }).color} 35%, transparent)`
+                : "var(--muted-foreground)"
+            }
+          />
+          <Panel
+            position="top-left"
+            className="text-muted-foreground pointer-events-none text-[11px]"
+          >
+            Drag to select · Space + drag or middle mouse to pan · Right-click
+            for options
+          </Panel>
+          <Panel position="top-right" className="flex gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="bg-background"
+              disabled={nodes.length === 0}
+              onClick={arrangeAndFit}
+            >
+              <NetworkIcon /> Arrange
+            </Button>
+            <Toggle
+              variant="outline"
+              size="sm"
+              className="bg-background"
+              pressed={autoArrange}
+              onPressedChange={setAutoArrange}
+              aria-label="Arrange automatically"
+              title="Re-arrange automatically when nodes or connections change"
+            >
+              <WandSparklesIcon /> Auto
+            </Toggle>
+          </Panel>
+        </ReactFlow>
+      </CanvasContextMenu>
+      {addMenu && (
+        <div
+          className="absolute z-10"
+          style={{
+            left: addMenu.screen.x,
+            top: addMenu.screen.y,
+            width: ADD_MENU_WIDTH,
+            height: ADD_MENU_HEIGHT,
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setAddMenu(null);
+          }}
+        >
+          <Palette
+            autoFocus
+            className="bg-popover ring-foreground/10 rounded-xl! shadow-lg ring-1"
+            onPick={(item) => {
+              addNode(paletteNode(item), addMenu.flow);
+              setAddMenu(null);
+            }}
+          />
+        </div>
+      )}
       {menu && <ConnectMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
   );

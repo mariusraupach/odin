@@ -129,3 +129,43 @@
     @apply font-sans;
   }
 }
+
+/*
+ * React Flow keeps a draggable box around box-selected nodes. Selected nodes
+ * are already highlighted and drag together, so drop the box; it also covered
+ * the nodes' inputs.
+ */
+.react-flow__nodesselection-rect {
+  display: none;
+}
+
+/*
+ * Islands are big containers: only their header and resize handles take
+ * clicks, so dragging on an island's body draws a selection box instead.
+ */
+.react-flow__node-island {
+  pointer-events: none !important;
+}
+.react-flow__node-island .island-interactive,
+.react-flow__node-island .react-flow__resize-control {
+  pointer-events: all;
+}
+
+/* Shipping lane between two islands' harbours. */
+.trade-route {
+  stroke: oklch(0.65 0.13 235);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 2 12;
+  animation: trade-route-flow 1.2s linear infinite;
+}
+@keyframes trade-route-flow {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trade-route {
+    animation: none;
+  }
+}
