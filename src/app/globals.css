@@ -151,6 +151,14 @@
   pointer-events: all;
 }
 
+/* Selecting a node fades everything it is not connected to. */
+.react-flow__node {
+  transition: opacity 150ms;
+}
+.react-flow__node.dimmed {
+  opacity: 0.25;
+}
+
 /* Shipping lane between two islands' harbours. */
 .trade-route {
   stroke: oklch(0.65 0.13 235);

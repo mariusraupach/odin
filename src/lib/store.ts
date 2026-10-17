@@ -98,7 +98,7 @@ type PlanState = {
   /** Copies nodes (and edges between them) and selects the copies. */
   duplicateNodes: (ids: string[]) => void;
   selectAll: () => void;
-  /** Selects exactly these nodes. */
+  /** Selects exactly these nodes, and no edges. */
   selectNodes: (ids: string[]) => void;
   addSuppliers: (id: string) => SupplierResult;
   /** Creates an empty island with its top-left corner at the point. */
@@ -111,6 +111,9 @@ type PlanState = {
   reparentNodes: (ids: string[]) => void;
   /** Re-sort the whole canvas automatically when nodes or edges change. */
   autoArrange: boolean;
+  /** Rate labels on every edge instead of only problems and the focus. */
+  showRates: boolean;
+  setShowRates: (showRates: boolean) => void;
   /** How the building palette groups buildings. */
   paletteGrouping: PaletteGrouping;
   setPaletteGrouping: (grouping: PaletteGrouping) => void;
@@ -238,6 +241,7 @@ export const usePlanStore = create<PlanState>()(
           nodes: get().nodes.map(
             (n) => ({ ...n, selected: keep.has(n.id) }) as PlanNode,
           ),
+          edges: get().edges.map((e) => ({ ...e, selected: false })),
         });
       },
       selectAll: () =>
@@ -371,6 +375,8 @@ export const usePlanStore = create<PlanState>()(
         return result;
       },
       autoArrange: false,
+      showRates: false,
+      setShowRates: (showRates) => set({ showRates }),
       paletteGrouping: "tier",
       setPaletteGrouping: (paletteGrouping) => set({ paletteGrouping }),
       setAutoArrange: (autoArrange) => set({ autoArrange }),
@@ -406,6 +412,7 @@ export const usePlanStore = create<PlanState>()(
         nodes: state.nodes,
         edges: state.edges,
         autoArrange: state.autoArrange,
+        showRates: state.showRates,
         paletteGrouping: state.paletteGrouping,
       }),
     },

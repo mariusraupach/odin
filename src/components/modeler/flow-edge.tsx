@@ -19,7 +19,7 @@ import {
   type TradeRoute,
 } from "@/lib/anno/calc";
 import { cn } from "@/lib/utils";
-import { statusStroke, statusText, useFlow } from "./flow-context";
+import { statusStroke, statusText, useFlow, useView } from "./flow-context";
 
 const LANE_OFFSET = 10;
 
@@ -79,15 +79,29 @@ export function FlowEdge({
   selected,
 }: EdgeProps) {
   const { edges, routeOfEdge } = useFlow();
+  const { focus, hoveredEdge, showRates } = useView();
   const flow = edges.get(id) ?? { rate: 0, requested: 0 };
   const status = rateStatus(flow.rate, flow.requested);
   // Connected, but the consumer is already covered by other suppliers.
   const idle = flow.rate < 0.005 && flow.requested < 0.005;
+  const focused = focus?.edges.has(id) ?? false;
+  const dimmed = focus !== null && !focused;
+  // Healthy edges stay quiet unless asked about.
+  const showLabel =
+    !dimmed &&
+    (showRates || focused || hoveredEdge === id || (!idle && status !== "ok"));
   const style = {
     stroke: idle ? "var(--muted-foreground)" : statusStroke[status],
-    strokeWidth: selected ? 3 : 2,
+    strokeWidth: selected || focused ? 3 : 2,
     strokeDasharray: idle ? "6 4" : undefined,
+    opacity: dimmed ? 0.1 : 1,
+    transition: "opacity 150ms",
   };
+  const title = (
+    <title>
+      {`${goodName(handleGood(targetHandleId))}: ${idle ? "not needed, covered by other suppliers" : `${formatRate(flow.rate)} t/min`}`}
+    </title>
+  );
 
   const sourceNode = useInternalNode(source);
   const targetNode = useInternalNode(target);
@@ -126,11 +140,15 @@ export function FlowEdge({
     ].join(" ");
     return (
       <>
+        {title}
         <BaseEdge id={id} path={legs} style={style} />
         {/* Every edge of a route shares the trunk; the first one draws it. */}
         {route.edgeIds[0] === id && (
           <TradeRouteTrunk
             route={route}
+            dimmed={
+              focus !== null && !route.edgeIds.some((e) => focus.edges.has(e))
+            }
             from={out.point}
             to={into.point}
             labelBelow={side.y > 0}
@@ -153,27 +171,31 @@ export function FlowEdge({
 
   return (
     <>
+      {title}
       <BaseEdge id={id} path={path} style={style} />
-      <EdgeLabelRenderer>
-        <div
-          className={cn(
-            "nodrag nopan bg-background pointer-events-auto absolute rounded-md border px-1.5 py-0.5 text-[10px] tabular-nums shadow-sm",
-            idle ? "text-muted-foreground" : statusText[status],
-          )}
-          style={{
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-          }}
-          title={`${goodName(handleGood(targetHandleId))}${idle ? ": not needed, covered by other suppliers" : ""}`}
-        >
-          {idle ? "idle" : `${formatRate(flow.rate)} t/min`}
-        </div>
-      </EdgeLabelRenderer>
+      {showLabel && (
+        <EdgeLabelRenderer>
+          {/* No pointer events: hovering the label would un-hover the edge. */}
+          <div
+            className={cn(
+              "bg-background pointer-events-none absolute rounded-md border px-1.5 py-0.5 text-[10px] tabular-nums shadow-sm",
+              idle ? "text-muted-foreground" : statusText[status],
+            )}
+            style={{
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            }}
+          >
+            {idle ? "idle" : `${formatRate(flow.rate)} t/min`}
+          </div>
+        </EdgeLabelRenderer>
+      )}
     </>
   );
 }
 
 function TradeRouteTrunk({
   route,
+  dimmed,
   from,
   to,
   fromColor,
@@ -181,6 +203,7 @@ function TradeRouteTrunk({
   labelBelow,
 }: {
   route: TradeRoute;
+  dimmed: boolean;
   /** Label on the lane's own side: below for one direction, above for the other. */
   labelBelow: boolean;
   from: XYPosition;
@@ -195,6 +218,7 @@ function TradeRouteTrunk({
         d={`M ${from.x} ${from.y} L ${to.x} ${to.y}`}
         className="trade-route"
         fill="none"
+        style={{ opacity: dimmed ? 0.15 : 1, transition: "opacity 150ms" }}
       />
       <EdgeLabelRenderer>
         {[
@@ -203,7 +227,10 @@ function TradeRouteTrunk({
         ].map(({ point, color }, i) => (
           <div
             key={i}
-            className="bg-background absolute flex size-7 items-center justify-center rounded-full border-2 shadow-sm"
+            className={cn(
+              "bg-background absolute flex size-7 items-center justify-center rounded-full border-2 shadow-sm transition-opacity",
+              dimmed && "opacity-25",
+            )}
             style={{
               borderColor: color,
               transform: `translate(-50%, -50%) translate(${point.x}px, ${point.y}px)`,
@@ -214,7 +241,10 @@ function TradeRouteTrunk({
           </div>
         ))}
         <div
-          className="nodrag nopan bg-background pointer-events-auto absolute flex flex-col gap-0.5 rounded-lg border px-2.5 py-1.5 text-[11px] shadow-md"
+          className={cn(
+            "nodrag nopan bg-background pointer-events-auto absolute flex flex-col gap-0.5 rounded-lg border px-2.5 py-1.5 text-[11px] shadow-md transition-opacity",
+            dimmed && "opacity-25",
+          )}
           style={{
             // Sit above the lane rather than on it.
             transform: `translate(-50%, ${labelBelow ? "14px" : "calc(-100% - 14px)"}) translate(${mid.x}px, ${mid.y}px)`,
