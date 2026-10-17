@@ -9,6 +9,7 @@ import type { ResidenceNode as ResidenceNodeType } from "@/lib/anno/calc";
 import { usePlanStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { useFlow } from "../flow-context";
+import { CountBadge } from "./count-badge";
 import { PortRow } from "./port-row";
 
 export function ResidenceNode({
@@ -33,7 +34,9 @@ export function ResidenceNode({
     >
       <CardHeader className="px-3">
         <CardTitle className="flex items-center gap-2">
-          <HouseIcon className="text-muted-foreground size-4" />
+          <CountBadge count={data.houses}>
+            <HouseIcon className="size-3.5" />
+          </CountBadge>
           <span className="truncate">{tier.name}</span>
         </CardTitle>
       </CardHeader>
