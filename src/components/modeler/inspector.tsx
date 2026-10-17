@@ -8,6 +8,7 @@ import { goodCategories, goodName, goodsById, workforceById } from "@/lib/anno";
 import {
   balanceStatus,
   formatRate,
+  hasUnmetInputs,
   nodeTitle,
   rateStatus,
 } from "@/lib/anno/calc";
@@ -21,14 +22,9 @@ export function Inspector() {
     (s) => s.nodes.filter((n) => n.selected).length,
   );
   const firstSelected = usePlanStore((s) => s.nodes.find((n) => n.selected));
-  const removeNode = usePlanStore((s) => s.removeNode);
+  const removeNodes = usePlanStore((s) => s.removeNodes);
   const addSuppliers = usePlanStore((s) => s.addSuppliers);
-
   const node = selectedCount === 1 ? firstSelected : undefined;
-  const nodeFlow = node ? flow.nodes.get(node.id) : undefined;
-  const title = node ? nodeTitle(node) : null;
-  const unmet =
-    nodeFlow?.inputs.some((i) => i.nominal - i.actual > 1e-6) ?? false;
 
   // Group by the game's goods categories; biggest deficits first in each.
   const goods = [...flow.goods].sort(
@@ -47,12 +43,12 @@ export function Inspector() {
     <div className="flex flex-col gap-4 p-4 text-sm">
       {node && (
         <section className="flex flex-col gap-2">
-          <h2 className="font-medium">{title}</h2>
+          <h2 className="font-medium">{nodeTitle(node)}</h2>
           <div className="flex gap-2">
             <Button
               size="sm"
               variant="outline"
-              disabled={!unmet}
+              disabled={!hasUnmetInputs(flow.nodes.get(node.id))}
               onClick={() => {
                 toast.success(describeSuppliers(addSuppliers(node.id)));
               }}
@@ -62,7 +58,7 @@ export function Inspector() {
             <Button
               size="sm"
               variant="destructive"
-              onClick={() => removeNode(node.id)}
+              onClick={() => removeNodes([node.id])}
             >
               <Trash2Icon /> Delete
             </Button>

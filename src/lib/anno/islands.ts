@@ -134,21 +134,17 @@ export function groupIntoIsland(
   const right = Math.max(...boxes.map((b) => b.x + b.width)) + ISLAND_PADDING;
   const bottom = Math.max(...boxes.map((b) => b.y + b.height)) + ISLAND_PADDING;
 
-  const island: IslandNode = {
-    id: islandId,
-    type: "island",
-    position: { x: left, y: top },
-    width: Math.max(ISLAND_MIN.width, right - left),
-    height: Math.max(ISLAND_MIN.height, bottom - top),
-    dragHandle: ".island-drag-handle",
-    // Box selection must pick the buildings on it, not the island; the
-    // island is selected by clicking its header instead.
-    selectable: false,
-    data: nextIslandData(nodes),
-  };
-  const memberIds = new Set(members.map((n) => n.id));
+  const island = newIsland(
+    nodes,
+    islandId,
+    { x: left, y: top },
+    {
+      width: Math.max(ISLAND_MIN.width, right - left),
+      height: Math.max(ISLAND_MIN.height, bottom - top),
+    },
+  );
   const next = nodes.map((node) => {
-    if (!memberIds.has(node.id)) return node;
+    if (!members.includes(node)) return node;
     const absolute = absolutePosition(node, nodes);
     return {
       ...node,
@@ -175,30 +171,24 @@ export function detach(nodes: PlanNode[], ids: string[]): PlanNode[] {
 
 /** Removes an island but keeps its buildings where they are. */
 export function ungroupIsland(nodes: PlanNode[], islandId: string): PlanNode[] {
-  return nodes
-    .filter((n) => n.id !== islandId)
-    .map((node) =>
-      node.parentId === islandId
-        ? ({
-            ...node,
-            parentId: undefined,
-            position: absolutePosition(node, nodes),
-          } as PlanNode)
-        : node,
-    );
+  const members = nodes.filter((n) => n.parentId === islandId);
+  return detach(
+    nodes,
+    members.map((n) => n.id),
+  ).filter((n) => n.id !== islandId);
 }
 
 export function newIsland(
   nodes: PlanNode[],
   islandId: string,
   position: XYPosition,
+  size = { width: 640, height: 420 },
 ): IslandNode {
   return {
     id: islandId,
     type: "island",
     position,
-    width: 640,
-    height: 420,
+    ...size,
     dragHandle: ".island-drag-handle",
     // Box selection must pick the buildings on it, not the island; the
     // island is selected by clicking its header instead.

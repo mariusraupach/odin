@@ -11,7 +11,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { buildingsById, workforceById } from "@/lib/anno";
-import type { BuildingNode as BuildingNodeType } from "@/lib/anno/calc";
+import {
+  nodesOfBuilding,
+  type BuildingNode as BuildingNodeType,
+} from "@/lib/anno/calc";
 import { usePlanStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { useFlow } from "../flow-context";
@@ -27,18 +30,11 @@ export function BuildingNode({
   const selectNodes = usePlanStore((s) => s.selectNodes);
   // Ids of every node of this building type, joined so the selector is stable.
   const sameBuilding = usePlanStore((s) =>
-    s.nodes
-      .filter(
-        (n) => n.type === "building" && n.data.buildingId === data.buildingId,
-      )
-      .map((n) => n.id)
-      .join(),
+    nodesOfBuilding(s.nodes, data.buildingId).join(),
   ).split(",");
   const flow = useFlow().nodes.get(id);
   const building = buildingsById.get(data.buildingId);
   if (!building || !flow) return null;
-
-  const workforce = building.workforce;
 
   return (
     <div className="relative">
@@ -134,10 +130,10 @@ export function BuildingNode({
           ))}
         </div>
 
-        {workforce && (
+        {building.workforce && (
           <div className="text-muted-foreground border-t px-3 pt-2 text-xs">
-            {workforce.count * data.count}{" "}
-            {workforceById.get(workforce.type)?.name} workforce
+            {building.workforce.count * data.count}{" "}
+            {workforceById.get(building.workforce.type)?.name} workforce
           </div>
         )}
       </Card>

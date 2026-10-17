@@ -129,41 +129,47 @@ export function nominalPorts(node: PlanNode): Ports {
 
 const EPSILON = 1e-9;
 
+/** The entry for `key`, created with `init` the first time. */
+function entry<V>(map: Map<string, V>, key: string, init: () => V): V {
+  if (!map.has(key)) map.set(key, init());
+  return map.get(key)!;
+}
+
 function addRate(list: GoodRate[] | undefined, good: string, rate: number) {
   if (!list) return;
-  const entry = list.find((g) => g.good === good);
-  if (entry) entry.rate += rate;
+  const existing = list.find((g) => g.good === good);
+  if (existing) existing.rate += rate;
   else list.push({ good, rate });
+}
+
+const sourceKey = (e: PlanEdge) => `${e.source}|${e.sourceHandle}`;
+const targetKey = (e: PlanEdge) => `${e.target}|${e.targetHandle}`;
+
+function groupBy(edges: PlanEdge[], key: (e: PlanEdge) => string) {
+  const groups = new Map<string, PlanEdge[]>();
+  for (const e of edges) entry(groups, key(e), () => []).push(e);
+  return groups;
 }
 
 /** Workforce required by buildings vs. provided by residences. */
 export function workforceBalance(nodes: PlanNode[]): WorkforceBalance[] {
   const workforce = new Map<string, WorkforceBalance>();
-  const entry = (id: string) => {
-    if (!workforce.has(id))
-      workforce.set(id, { workforce: id, required: 0, provided: 0 });
-    return workforce.get(id)!;
-  };
+  const balance = (id: string) =>
+    entry(workforce, id, () => ({ workforce: id, required: 0, provided: 0 }));
   for (const node of nodes) {
     if (node.type === "building") {
       const wf = buildingsById.get(node.data.buildingId)?.workforce;
-      if (wf) entry(wf.type).required += wf.count * node.data.count;
+      if (wf) balance(wf.type).required += wf.count * node.data.count;
     } else if (node.type === "residence") {
       const tier = tiersById.get(node.data.tierId);
       if (tier)
-        entry(tier.workforce).provided +=
+        balance(tier.workforce).provided +=
           node.data.houses * tier.residentsPerHouse;
     }
   }
   return [...workforce.values()];
 }
 
-/**
- * Propagates goods through the graph. Each consumer input splits its demand
- * evenly across incoming edges; a producer short on supply scales all of its
- * outgoing edges down proportionally. Buildings with unmet inputs produce
- * less, which is iterated until the graph settles.
- */
 /**
  * Splits supply across edges. First every consumer spreads its unmet demand
  * evenly over suppliers that still have spare output (suppliers short on
@@ -178,22 +184,13 @@ function allocate(
   demandOf: (e: PlanEdge) => number,
 ): Map<string, number> {
   const flow = new Map(edges.map((e) => [e.id, 0]));
-  const sourceKey = (e: PlanEdge) => `${e.source}|${e.sourceHandle}`;
-  const targetKey = (e: PlanEdge) => `${e.target}|${e.targetHandle}`;
+  const bySource = groupBy(edges, sourceKey);
+  const byTarget = groupBy(edges, targetKey);
+  const capacity = new Map(edges.map((e) => [sourceKey(e), supplyOf(e)]));
+  const demand = new Map(edges.map((e) => [targetKey(e), demandOf(e)]));
 
-  const capacity = new Map<string, number>();
-  const demand = new Map<string, number>();
-  const bySource = new Map<string, PlanEdge[]>();
-  const byTarget = new Map<string, PlanEdge[]>();
-  for (const e of edges) {
-    capacity.set(sourceKey(e), supplyOf(e));
-    demand.set(targetKey(e), demandOf(e));
-    bySource.set(sourceKey(e), [...(bySource.get(sourceKey(e)) ?? []), e]);
-    byTarget.set(targetKey(e), [...(byTarget.get(targetKey(e)) ?? []), e]);
-  }
-
-  const sum = (list: PlanEdge[] | undefined) =>
-    (list ?? []).reduce((total, e) => total + flow.get(e.id)!, 0);
+  const sum = (list: PlanEdge[] = []) =>
+    list.reduce((total, e) => total + flow.get(e.id)!, 0);
   const spare = (key: string) => capacity.get(key)! - sum(bySource.get(key));
   const unmet = (key: string) => demand.get(key)! - sum(byTarget.get(key));
 
@@ -221,8 +218,8 @@ function allocate(
   }
 
   // Phase 2: augmenting paths (supplier -> consumer -> other supplier ...).
+  type Step = { edge: PlanEdge; forward: boolean };
   for (let round = 0; round < 1000; round++) {
-    type Step = { edge: PlanEdge; forward: boolean };
     const cameFrom = new Map<string, { prev: string; step: Step } | null>();
     const queue: string[] = [];
     for (const key of bySource.keys()) {
@@ -265,22 +262,19 @@ function allocate(
     if (!end) break;
 
     const path: Step[] = [];
-    let node = end;
     let start = end;
-    while (cameFrom.get(node)) {
-      const { prev, step } = cameFrom.get(node)!;
+    while (cameFrom.get(start)) {
+      const { prev, step } = cameFrom.get(start)!;
       path.unshift(step);
-      node = prev;
       start = prev;
     }
     let amount = Math.min(spare(start.slice(2)), unmet(end.slice(2)));
-    for (const step of path) {
-      if (!step.forward) amount = Math.min(amount, flow.get(step.edge.id)!);
+    for (const { edge, forward } of path) {
+      if (!forward) amount = Math.min(amount, flow.get(edge.id)!);
     }
     if (amount <= EPSILON) break;
-    for (const step of path) {
-      const delta = step.forward ? amount : -amount;
-      flow.set(step.edge.id, flow.get(step.edge.id)! + delta);
+    for (const { edge, forward } of path) {
+      flow.set(edge.id, flow.get(edge.id)! + (forward ? amount : -amount));
     }
   }
 
@@ -298,12 +292,7 @@ export function computeFlow(
 ): FlowResult {
   const ports = new Map(nodes.map((n) => [n.id, nominalPorts(n)]));
   const efficiency = new Map(nodes.map((n) => [n.id, 1]));
-
-  const incoming = new Map<string, PlanEdge[]>();
-  for (const e of edges) {
-    const key = `${e.target}|${e.targetHandle}`;
-    incoming.set(key, [...(incoming.get(key) ?? []), e]);
-  }
+  const incoming = groupBy(edges, targetKey);
 
   const supplyOf = (e: PlanEdge) =>
     (ports.get(e.source)?.outputs.get(handleGood(e.sourceHandle)) ?? 0) *
@@ -312,6 +301,11 @@ export function computeFlow(
     ports.get(e.target)?.inputs.get(handleGood(e.targetHandle)) ?? 0;
 
   let flows = new Map<string, number>();
+  const carried = (list: PlanEdge[] = []) =>
+    list.reduce((sum, e) => sum + (flows.get(e.id) ?? 0), 0);
+  const received = (nodeId: string, good: string) =>
+    carried(incoming.get(`${nodeId}|${inHandle(good)}`));
+
   for (let iteration = 0; iteration < 50; iteration++) {
     flows = allocate(edges, supplyOf, demandOf);
     if (assumeFullInputs) break;
@@ -321,11 +315,8 @@ export function computeFlow(
       if (node.type !== "building") continue;
       let next = 1;
       for (const [good, demand] of ports.get(node.id)!.inputs) {
-        if (demand <= EPSILON) continue;
-        const received = (
-          incoming.get(`${node.id}|${inHandle(good)}`) ?? []
-        ).reduce((sum, e) => sum + (flows.get(e.id) ?? 0), 0);
-        next = Math.min(next, received / demand);
+        if (demand > EPSILON)
+          next = Math.min(next, received(node.id, good) / demand);
       }
       if (Math.abs(next - efficiency.get(node.id)!) > 1e-6) changed = true;
       efficiency.set(node.id, next);
@@ -335,27 +326,25 @@ export function computeFlow(
 
   // An edge "asks" for what it carries plus its share of the consumer's
   // remaining shortfall, so it only shows as short when the consumer is.
-  const requested = new Map<string, number>();
+  const edgeFlows = new Map<string, EdgeFlow>();
   for (const group of incoming.values()) {
-    const received = group.reduce((sum, e) => sum + (flows.get(e.id) ?? 0), 0);
-    const unmet = Math.max(0, demandOf(group[0]) - received);
+    const unmet = Math.max(0, demandOf(group[0]) - carried(group));
     for (const e of group) {
-      requested.set(e.id, (flows.get(e.id) ?? 0) + unmet / group.length);
+      const rate = flows.get(e.id) ?? 0;
+      edgeFlows.set(e.id, { rate, requested: rate + unmet / group.length });
     }
   }
 
   const nodeFlows = new Map<string, NodeFlow>();
   for (const node of nodes) {
     const { inputs, outputs } = ports.get(node.id)!;
-    const sumEdges = (list: PlanEdge[] | undefined) =>
-      (list ?? []).reduce((sum, e) => sum + (flows.get(e.id) ?? 0), 0);
     const eff = efficiency.get(node.id)!;
     nodeFlows.set(node.id, {
       efficiency: eff,
       inputs: [...inputs].map(([good, nominal]) => ({
         good,
         nominal,
-        actual: sumEdges(incoming.get(`${node.id}|${inHandle(good)}`)),
+        actual: received(node.id, good),
       })),
       outputs: [...outputs].map(([good, nominal]) => ({
         good,
@@ -365,31 +354,20 @@ export function computeFlow(
     });
   }
 
-  const edgeFlows = new Map<string, EdgeFlow>();
-  for (const e of edges) {
-    edgeFlows.set(e.id, {
-      rate: flows.get(e.id) ?? 0,
-      requested: requested.get(e.id) ?? 0,
-    });
-  }
-
   // Plan-wide totals ignore edges: what would the plan produce vs. consume.
   const goods = new Map<string, GoodBalance>();
-  const goodEntry = (good: string) => {
-    if (!goods.has(good)) goods.set(good, { good, produced: 0, consumed: 0 });
-    return goods.get(good)!;
-  };
+  const balance = (good: string) =>
+    entry(goods, good, () => ({ good, produced: 0, consumed: 0 }));
   for (const { inputs, outputs } of ports.values()) {
-    for (const [good, rate] of outputs) goodEntry(good).produced += rate;
-    for (const [good, rate] of inputs) goodEntry(good).consumed += rate;
+    for (const [good, rate] of outputs) balance(good).produced += rate;
+    for (const [good, rate] of inputs) balance(good).consumed += rate;
   }
 
   // Workforce and trade are per island: workers do not commute by ship.
-  const islandIds = nodes.filter((n) => n.type === "island").map((n) => n.id);
   const islands = new Map<string, IslandStats>();
-  for (const islandId of islandIds) {
-    const members = nodes.filter((n) => n.parentId === islandId);
-    islands.set(islandId, {
+  for (const island of nodes.filter((n) => n.type === "island")) {
+    const members = nodes.filter((n) => n.parentId === island.id);
+    islands.set(island.id, {
       workforce: workforceBalance(members),
       buildings: members.reduce(
         (sum, n) => sum + (n.type === "building" ? n.data.count : 0),
@@ -408,16 +386,15 @@ export function computeFlow(
     const to = islandOf.get(e.target);
     if (!from || !to || from === to) continue;
     const key = `${from}->${to}`;
-    if (!routes.has(key)) {
-      routes.set(key, { key, from, to, goods: [], edgeIds: [] });
-    }
-    const route = routes.get(key)!;
+    const route = entry(routes, key, () => ({
+      key,
+      from,
+      to,
+      goods: [],
+      edgeIds: [],
+    }));
     route.edgeIds.push(e.id);
-    const good = handleGood(e.sourceHandle);
-    const rate = flows.get(e.id) ?? 0;
-    const entry = route.goods.find((g) => g.good === good);
-    if (entry) entry.rate += rate;
-    else route.goods.push({ good, rate });
+    addRate(route.goods, handleGood(e.sourceHandle), flows.get(e.id) ?? 0);
     routeOfEdge.set(e.id, route);
   }
   for (const route of routes.values()) {
@@ -437,6 +414,31 @@ export function computeFlow(
     routeOfEdge,
   };
 }
+
+/** Whether any input of the node gets less than it needs. */
+export const hasUnmetInputs = (flow: NodeFlow | undefined) =>
+  flow?.inputs.some((i) => i.nominal - i.actual > 1e-6) ?? false;
+
+/** What a node makes of a good but does not ship anywhere, t/min. */
+export function spareOutput(
+  flow: FlowResult,
+  edges: PlanEdge[],
+  nodeId: string,
+  good: string,
+) {
+  const made =
+    flow.nodes.get(nodeId)?.outputs.find((o) => o.good === good)?.actual ?? 0;
+  const shipped = edges
+    .filter((e) => e.source === nodeId && e.sourceHandle === outHandle(good))
+    .reduce((sum, e) => sum + (flow.edges.get(e.id)?.rate ?? 0), 0);
+  return made - shipped;
+}
+
+/** Ids of every node of a building type. */
+export const nodesOfBuilding = (nodes: PlanNode[], buildingId: string) =>
+  nodes
+    .filter((n) => n.type === "building" && n.data.buildingId === buildingId)
+    .map((n) => n.id);
 
 export type Status = "ok" | "low" | "none";
 

@@ -26,7 +26,7 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { nodeTitle } from "@/lib/anno/calc";
+import { hasUnmetInputs, nodeTitle, nodesOfBuilding } from "@/lib/anno/calc";
 import { describeSuppliers, usePlanStore } from "@/lib/store";
 import { useFlow } from "./flow-context";
 
@@ -100,19 +100,9 @@ export function CanvasContextMenu({
     );
   } else if (target?.kind === "node") {
     const node = nodes.find((n) => n.id === target.id);
-    const unmet =
-      flow.nodes
-        .get(target.id)
-        ?.inputs.some((i) => i.nominal - i.actual > 1e-6) ?? false;
     const sameBuilding =
       node?.type === "building"
-        ? nodes
-            .filter(
-              (n) =>
-                n.type === "building" &&
-                n.data.buildingId === node.data.buildingId,
-            )
-            .map((n) => n.id)
+        ? nodesOfBuilding(nodes, node.data.buildingId)
         : [];
     if (node) {
       content = (
@@ -122,10 +112,10 @@ export function CanvasContextMenu({
               {nodeTitle(node)}
             </ContextMenuLabel>
             <ContextMenuItem
-              disabled={!unmet}
-              onClick={() => {
-                toast.success(describeSuppliers(addSuppliers(node.id)));
-              }}
+              disabled={!hasUnmetInputs(flow.nodes.get(node.id))}
+              onClick={() =>
+                toast.success(describeSuppliers(addSuppliers(node.id)))
+              }
             >
               <PlugZapIcon /> Add suppliers
             </ContextMenuItem>

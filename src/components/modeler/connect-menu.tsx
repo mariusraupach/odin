@@ -11,8 +11,19 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command";
-import { consumersOf, goodName, producersOf, tiersNeeding } from "@/lib/anno";
-import { buildingsFor, inHandle, outHandle } from "@/lib/anno/calc";
+import {
+  consumersOf,
+  goodName,
+  producersOf,
+  tiersNeeding,
+  type Building,
+} from "@/lib/anno";
+import {
+  buildingsFor,
+  inHandle,
+  outHandle,
+  spareOutput,
+} from "@/lib/anno/calc";
 import { usePlanStore, type NewNode } from "@/lib/store";
 import { useFlow } from "./flow-context";
 
@@ -35,6 +46,16 @@ const NODE_WIDTH = 256;
 
 type Option = { key: string; label: string; detail: string; node: NewNode };
 
+const buildingOption = (building: Building, count: number): Option => ({
+  key: building.id,
+  label: building.name,
+  detail: `×${count}${building.region === "new-world" ? " · New World" : ""}`,
+  node: {
+    type: "building",
+    data: { buildingId: building.id, count, productivity: 100 },
+  },
+});
+
 export function ConnectMenu({
   menu,
   onClose,
@@ -56,30 +77,16 @@ export function ConnectMenu({
     const missing = port ? Math.max(0, port.nominal - port.actual) : 0;
     options.push({
       heading: `Produce ${goodName(menu.good)}`,
-      items: producersOf(menu.good).map((b) => {
-        const count = missing > 0 ? buildingsFor(missing, b.id) : 1;
-        return {
-          key: b.id,
-          label: b.name,
-          detail: `×${count}${b.region === "new-world" ? " · New World" : ""}`,
-          node: {
-            type: "building",
-            data: { buildingId: b.id, count, productivity: 100 },
-          },
-        };
-      }),
+      items: producersOf(menu.good).map((b) =>
+        buildingOption(b, missing > 0 ? buildingsFor(missing, b.id) : 1),
+      ),
     });
   } else {
     // Size consumers to use up what this output has left over.
-    const produced =
-      nodeFlow?.outputs.find((p) => p.good === menu.good)?.actual ?? 0;
-    const shipped = edges
-      .filter(
-        (e) =>
-          e.source === menu.nodeId && e.sourceHandle === outHandle(menu.good),
-      )
-      .reduce((sum, e) => sum + (flow.edges.get(e.id)?.rate ?? 0), 0);
-    const surplus = Math.max(0, produced - shipped);
+    const surplus = Math.max(
+      0,
+      spareOutput(flow, edges, menu.nodeId, menu.good),
+    );
 
     options.push({
       heading: "Residences",
@@ -105,45 +112,30 @@ export function ConnectMenu({
       items: consumersOf(menu.good).map((b) => {
         const perBuilding =
           b.tpmin * (b.inputs.find((i) => i.good === menu.good)?.amount ?? 0);
-        const count =
+        return buildingOption(
+          b,
           surplus > 0 && perBuilding > 0
             ? Math.max(1, Math.floor(surplus / perBuilding))
-            : 1;
-        return {
-          key: b.id,
-          label: b.name,
-          detail: `×${count}${b.region === "new-world" ? " · New World" : ""}`,
-          node: {
-            type: "building",
-            data: { buildingId: b.id, count, productivity: 100 },
-          },
-        };
+            : 1,
+        );
       }),
     });
   }
 
   const pick = (option: Option) => {
     // Producers go left of the drop point so their output faces the input.
-    const position =
-      menu.side === "in"
-        ? { x: menu.flow.x - NODE_WIDTH, y: menu.flow.y - 40 }
-        : { x: menu.flow.x, y: menu.flow.y - 40 };
-    const id = addNode(option.node, position);
-    onConnect(
-      menu.side === "in"
-        ? {
-            source: id,
-            sourceHandle: outHandle(menu.good),
-            target: menu.nodeId,
-            targetHandle: inHandle(menu.good),
-          }
-        : {
-            source: menu.nodeId,
-            sourceHandle: outHandle(menu.good),
-            target: id,
-            targetHandle: inHandle(menu.good),
-          },
-    );
+    const id = addNode(option.node, {
+      x: menu.side === "in" ? menu.flow.x - NODE_WIDTH : menu.flow.x,
+      y: menu.flow.y - 40,
+    });
+    const [source, target] =
+      menu.side === "in" ? [id, menu.nodeId] : [menu.nodeId, id];
+    onConnect({
+      source,
+      target,
+      sourceHandle: outHandle(menu.good),
+      targetHandle: inHandle(menu.good),
+    });
     onClose();
   };
 

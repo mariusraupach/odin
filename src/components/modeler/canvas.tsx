@@ -54,16 +54,17 @@ export function Canvas() {
   const arrange = usePlanStore((s) => s.arrange);
   const autoArrange = usePlanStore((s) => s.autoArrange);
   const setAutoArrange = usePlanStore((s) => s.setAutoArrange);
+  const duplicateNodes = usePlanStore((s) => s.duplicateNodes);
+  const selectAll = usePlanStore((s) => s.selectAll);
+  const selectNodes = usePlanStore((s) => s.selectNodes);
+  const addIsland = usePlanStore((s) => s.addIsland);
+  const reparentNodes = usePlanStore((s) => s.reparentNodes);
   const { screenToFlowPosition, fitView } = useReactFlow();
   const { resolvedTheme } = useTheme();
   const container = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<ConnectMenuState | null>(null);
   const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
   const [addMenu, setAddMenu] = useState<AddMenuState | null>(null);
-  const duplicateNodes = usePlanStore((s) => s.duplicateNodes);
-  const selectAll = usePlanStore((s) => s.selectAll);
-  const addIsland = usePlanStore((s) => s.addIsland);
-  const reparentNodes = usePlanStore((s) => s.reparentNodes);
 
   const closeMenus = () => {
     setMenu(null);
@@ -74,8 +75,12 @@ export function Canvas() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
-      const el = event.target as HTMLElement;
-      if (el.closest("input, textarea, [contenteditable]")) return;
+      if (
+        (event.target as HTMLElement).closest(
+          "input, textarea, [contenteditable]",
+        )
+      )
+        return;
       const key = event.key.toLowerCase();
       if (key === "a") {
         event.preventDefault();
@@ -192,13 +197,7 @@ export function Canvas() {
               setMenuTarget({ kind: "island", id: node.id });
             } else {
               // Right-clicking an unselected node selects just that node.
-              onNodesChange(
-                nodes.map((n) => ({
-                  type: "select",
-                  id: n.id,
-                  selected: n.id === node.id,
-                })),
-              );
+              selectNodes([node.id]);
               setMenuTarget({ kind: "node", id: node.id });
             }
           }}

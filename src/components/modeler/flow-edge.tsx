@@ -51,6 +51,12 @@ function harbour(from: Rect, to: Rect) {
   };
 }
 
+/** `point` moved `by` along the unit vector `dir`. */
+const shift = (point: XYPosition, dir: XYPosition, by: number) => ({
+  x: point.x + dir.x * by,
+  y: point.y + dir.y * by,
+});
+
 const curve = (
   from: XYPosition,
   c1: XYPosition,
@@ -72,18 +78,22 @@ export function FlowEdge({
   targetHandleId,
   selected,
 }: EdgeProps) {
-  const result = useFlow();
-  const flow = result.edges.get(id) ?? { rate: 0, requested: 0 };
+  const { edges, routeOfEdge } = useFlow();
+  const flow = edges.get(id) ?? { rate: 0, requested: 0 };
   const status = rateStatus(flow.rate, flow.requested);
   // Connected, but the consumer is already covered by other suppliers.
   const idle = flow.rate < 0.005 && flow.requested < 0.005;
-  const stroke = idle ? "var(--muted-foreground)" : statusStroke[status];
+  const style = {
+    stroke: idle ? "var(--muted-foreground)" : statusStroke[status],
+    strokeWidth: selected ? 3 : 2,
+    strokeDasharray: idle ? "6 4" : undefined,
+  };
 
   const sourceNode = useInternalNode(source);
   const targetNode = useInternalNode(target);
   const fromIsland = useInternalNode(sourceNode?.parentId ?? "");
   const toIsland = useInternalNode(targetNode?.parentId ?? "");
-  const route = result.routeOfEdge.get(id);
+  const route = routeOfEdge.get(id);
 
   if (route && fromIsland && toIsland) {
     // Shipped between islands: producer -> harbour, trade route, harbour -> consumer.
@@ -91,47 +101,32 @@ export function FlowEdge({
     const into = harbour(rectOf(toIsland), rectOf(fromIsland));
     // Shift each direction to its own side so A->B and B->A run in parallel.
     const side = { x: -out.dir.y, y: out.dir.x };
-    for (const end of [out, into]) {
-      end.point = {
-        x: end.point.x + side.x * LANE_OFFSET,
-        y: end.point.y + side.y * LANE_OFFSET,
-      };
-    }
+    out.point = shift(out.point, side, LANE_OFFSET);
+    into.point = shift(into.point, side, LANE_OFFSET);
     // Shorter curves on short legs, so they do not loop back on themselves.
-    const pullFor = (a: XYPosition, b: XYPosition) =>
+    const pull = (a: XYPosition, b: XYPosition) =>
       Math.min(80, Math.hypot(a.x - b.x, a.y - b.y) / 2);
     const start = { x: sourceX, y: sourceY };
     const end = { x: targetX, y: targetY };
-    const p1 = pullFor(start, out.point);
-    const p2 = pullFor(into.point, end);
+    const pullOut = pull(start, out.point);
+    const pullIn = pull(into.point, end);
     const legs = [
       curve(
         start,
-        { x: sourceX + p1, y: sourceY },
-        { x: out.point.x - out.dir.x * p1, y: out.point.y - out.dir.y * p1 },
+        { x: sourceX + pullOut, y: sourceY },
+        shift(out.point, out.dir, -pullOut),
         out.point,
       ),
       curve(
         into.point,
-        {
-          x: into.point.x - into.dir.x * p2,
-          y: into.point.y - into.dir.y * p2,
-        },
-        { x: targetX - p2, y: targetY },
+        shift(into.point, into.dir, -pullIn),
+        { x: targetX - pullIn, y: targetY },
         end,
       ),
     ].join(" ");
     return (
       <>
-        <BaseEdge
-          id={id}
-          path={legs}
-          style={{
-            stroke,
-            strokeWidth: selected ? 3 : 2,
-            strokeDasharray: idle ? "6 4" : undefined,
-          }}
-        />
+        <BaseEdge id={id} path={legs} style={style} />
         {/* Every edge of a route shares the trunk; the first one draws it. */}
         {route.edgeIds[0] === id && (
           <TradeRouteTrunk
@@ -158,15 +153,7 @@ export function FlowEdge({
 
   return (
     <>
-      <BaseEdge
-        id={id}
-        path={path}
-        style={{
-          stroke,
-          strokeWidth: selected ? 3 : 2,
-          strokeDasharray: idle ? "6 4" : undefined,
-        }}
-      />
+      <BaseEdge id={id} path={path} style={style} />
       <EdgeLabelRenderer>
         <div
           className={cn(
@@ -176,11 +163,7 @@ export function FlowEdge({
           style={{
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
           }}
-          title={
-            idle
-              ? `${goodName(handleGood(targetHandleId))}: not needed, covered by other suppliers`
-              : goodName(handleGood(targetHandleId))
-          }
+          title={`${goodName(handleGood(targetHandleId))}${idle ? ": not needed, covered by other suppliers" : ""}`}
         >
           {idle ? "idle" : `${formatRate(flow.rate)} t/min`}
         </div>

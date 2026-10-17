@@ -16,6 +16,7 @@ import {
   handleGood,
   inHandle,
   outHandle,
+  spareOutput,
   type BuildingNode,
   type BuildingNodeData,
   type IslandNodeData,
@@ -60,12 +61,13 @@ export function describeSuppliers({
   added,
   starved,
 }: SupplierResult) {
-  const parts = [
+  const text = [
     connected && `connected ${connected} existing`,
     expanded && `expanded ${expanded} existing`,
     added && `added ${added} new`,
-  ].filter(Boolean);
-  const text = parts.join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
   const total = connected + expanded + added;
   const changes = text
     ? `${text[0].toUpperCase()}${text.slice(1)} supplier${total === 1 ? "" : "s"}`
@@ -92,7 +94,6 @@ type PlanState = {
     id: string,
     data: Partial<BuildingNodeData & ResidenceNodeData & IslandNodeData>,
   ) => void;
-  removeNode: (id: string) => void;
   removeNodes: (ids: string[]) => void;
   /** Copies nodes (and edges between them) and selects the copies. */
   duplicateNodes: (ids: string[]) => void;
@@ -169,11 +170,10 @@ export const usePlanStore = create<PlanState>()(
       addNode: (node, position) => {
         const id = newId();
         // Dropped onto an island: the node joins it.
-        const placed = placeAt(position, get().nodes);
         set({
           nodes: sortParentsFirst([
             ...get().nodes,
-            { ...node, id, ...placed } as PlanNode,
+            { ...node, id, ...placeAt(position, get().nodes) } as PlanNode,
           ]),
         });
         return id;
@@ -186,7 +186,6 @@ export const usePlanStore = create<PlanState>()(
               : n,
           ),
         }),
-      removeNode: (id) => get().removeNodes([id]),
       removeNodes: (ids) => {
         // Deleting an island deletes what is on it.
         const remove = new Set(ids);
@@ -202,36 +201,35 @@ export const usePlanStore = create<PlanState>()(
       },
       duplicateNodes: (ids) => {
         const { nodes, edges } = get();
-        const islandIds = new Set(nodes.filter(isIsland).map((n) => n.id));
-        const copies = new Map(
-          ids.filter((id) => !islandIds.has(id)).map((id) => [id, newId()]),
+        const originals = nodes.filter(
+          (n) => ids.includes(n.id) && !isIsland(n),
         );
-        const newNodes = nodes
-          .filter((n) => copies.has(n.id))
-          .map(
-            (n) =>
-              ({
-                ...n,
-                id: copies.get(n.id)!,
-                position: { x: n.position.x + 40, y: n.position.y + 40 },
-                selected: true,
-              }) as PlanNode,
-          );
-        const newEdges = edges
-          .filter((e) => copies.has(e.source) && copies.has(e.target))
-          .map((e) => ({
-            ...e,
-            id: `e-${newId()}`,
-            source: copies.get(e.source)!,
-            target: copies.get(e.target)!,
-            selected: false,
-          }));
+        const copies = new Map(originals.map((n) => [n.id, newId()]));
         set({
           nodes: [
             ...nodes.map((n) => ({ ...n, selected: false }) as PlanNode),
-            ...newNodes,
+            ...originals.map(
+              (n) =>
+                ({
+                  ...n,
+                  id: copies.get(n.id)!,
+                  position: { x: n.position.x + 40, y: n.position.y + 40 },
+                  selected: true,
+                }) as PlanNode,
+            ),
           ],
-          edges: [...edges, ...newEdges],
+          edges: [
+            ...edges,
+            ...edges
+              .filter((e) => copies.has(e.source) && copies.has(e.target))
+              .map((e) => ({
+                ...e,
+                id: `e-${newId()}`,
+                source: copies.get(e.source)!,
+                target: copies.get(e.target)!,
+                selected: false,
+              })),
+          ],
         });
       },
       selectNodes: (ids) => {
@@ -266,14 +264,15 @@ export const usePlanStore = create<PlanState>()(
 
         const nextNodes = [...nodes];
         const newEdges: PlanEdge[] = [];
-        const connect = (sourceId: string, good: string) => {
-          const linked = [...edges, ...newEdges].some(
+        const isLinked = (sourceId: string, good: string) =>
+          [...edges, ...newEdges].some(
             (e) =>
               e.source === sourceId &&
               e.target === id &&
               e.targetHandle === inHandle(good),
           );
-          if (linked) return;
+        const connect = (sourceId: string, good: string) => {
+          if (isLinked(sourceId, good)) return;
           newEdges.push({
             id: `e-${newId()}`,
             type: "flow",
@@ -297,26 +296,15 @@ export const usePlanStore = create<PlanState>()(
           );
 
           // 1. Tap spare output of producers already on the canvas.
-          const spareOf = (producer: BuildingNode) => {
-            const made =
-              flow.nodes
-                .get(producer.id)
-                ?.outputs.find((o) => o.good === input.good)?.actual ?? 0;
-            const shipped = edges
-              .filter(
-                (e) =>
-                  e.source === producer.id &&
-                  e.sourceHandle === outHandle(input.good),
-              )
-              .reduce((sum, e) => sum + (flow.edges.get(e.id)?.rate ?? 0), 0);
-            return made - shipped;
-          };
-          for (const producer of [...producers].sort(
-            (a, b) => spareOf(b) - spareOf(a),
-          )) {
+          const withSpare = producers
+            .map((producer) => ({
+              producer,
+              spare: spareOutput(flow, edges, producer.id, input.good),
+            }))
+            .filter(({ spare }) => spare > 1e-6)
+            .sort((a, b) => b.spare - a.spare);
+          for (const { producer, spare } of withSpare) {
             if (shortfall <= 1e-6) break;
-            const spare = spareOf(producer);
-            if (spare <= 1e-6) continue;
             connect(producer.id, input.good);
             shortfall -= spare;
             result.connected++;
@@ -324,25 +312,21 @@ export const usePlanStore = create<PlanState>()(
           if (shortfall <= 1e-6) return;
 
           // 2. Grow an existing producer, preferring one already wired here.
-          const wired = new Set(
-            [...edges, ...newEdges]
-              .filter(
-                (e) =>
-                  e.target === id && e.targetHandle === inHandle(input.good),
-              )
-              .map((e) => e.source),
-          );
-          const grow = producers.find((p) => wired.has(p.id)) ?? producers[0];
+          const grow =
+            producers.find((p) => isLinked(p.id, input.good)) ?? producers[0];
           if (grow) {
-            const index = nextNodes.findIndex((n) => n.id === grow.id);
-            const extra = buildingsFor(
-              shortfall,
-              grow.data.buildingId,
-              grow.data.productivity,
-            );
-            nextNodes[index] = {
+            nextNodes[nextNodes.findIndex((n) => n.id === grow.id)] = {
               ...grow,
-              data: { ...grow.data, count: grow.data.count + extra },
+              data: {
+                ...grow.data,
+                count:
+                  grow.data.count +
+                  buildingsFor(
+                    shortfall,
+                    grow.data.buildingId,
+                    grow.data.productivity,
+                  ),
+              },
             };
             connect(grow.id, input.good);
             result.expanded++;
